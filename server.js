@@ -52,7 +52,7 @@ async function appendToSheet(order) {
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: "Sheet1!A:J",
+      range: "Orders!A:J",
       valueInputOption: "RAW",
       requestBody: { values }
     });
