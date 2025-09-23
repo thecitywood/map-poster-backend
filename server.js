@@ -1,11 +1,13 @@
 const express = require("express");
 const { Pool } = require("pg");
 const crypto = require("crypto");
+const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware do JSON
+// Middleware
+app.use(cors());
 app.use(express.json());
 
 // Połączenie z Neon DB
