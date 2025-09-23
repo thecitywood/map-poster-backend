@@ -46,7 +46,7 @@ async function appendToSheet(order) {
       order.front_text || "",
       order.back_text || "",
       JSON.stringify(order.pins),
-      `https://map-poster-backend-e5f9.onrender.com/preview/${order.preview_token}`,
+      `https://thecitywood.com/pages/preview?token=${order.preview_token}`,
       order.created_at
     ]];
 
@@ -57,7 +57,7 @@ async function appendToSheet(order) {
       requestBody: { values }
     });
 
-    console.log("✅ Order exported to Google Sheets");
+    console.log("✅ Order exported to Google Sheets with Shopify link");
   } catch (err) {
     console.error("❌ Error exporting to Google Sheets:", err);
   }
@@ -141,7 +141,7 @@ app.post("/api/order", async (req, res) => {
     res.json({
       message: "✅ Order saved",
       order,
-      preview_link: `https://map-poster-backend-e5f9.onrender.com/preview/${preview_token}`
+      preview_link: `https://thecitywood.com/pages/preview?token=${preview_token}`
     });
   } catch (err) {
     console.error(err);
@@ -160,7 +160,7 @@ app.get("/api/orders", async (req, res) => {
   }
 });
 
-// Preview order by token
+// Preview order by token (still works on backend if needed)
 app.get("/preview/:token", async (req, res) => {
   try {
     const { token } = req.params;
