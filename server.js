@@ -1,14 +1,20 @@
 const express = require("express");
 const { Pool } = require("pg");
 const crypto = require("crypto");
-const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+// Middleware JSON
 app.use(express.json());
+
+// Middleware CORS – ręczne nagłówki
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  next();
+});
 
 // Połączenie z Neon DB
 const pool = new Pool({
