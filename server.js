@@ -1,6 +1,7 @@
 const express = require("express");
 const { Pool } = require("pg");
 const crypto = require("crypto");
+const { google } = require("googleapis");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,6 +22,46 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
+
+// Google Sheets setup
+const SHEET_ID = process.env.GOOGLE_SHEET_ID;
+
+// Authenticate with service account
+const auth = new google.auth.GoogleAuth({
+  keyFile: "/etc/secrets/google-service-account.json",
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+});
+
+async function appendToSheet(order) {
+  try {
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: "v4", auth: client });
+
+    const values = [[
+      order.id,
+      order.shopify_order_id,
+      order.email,
+      order.map_style,
+      order.map_size,
+      order.front_text || "",
+      order.back_text || "",
+      JSON.stringify(order.pins),
+      `https://map-poster-backend-e5f9.onrender.com/preview/${order.preview_token}`,
+      order.created_at
+    ]];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: "Sheet1!A:J",
+      valueInputOption: "RAW",
+      requestBody: { values }
+    });
+
+    console.log("✅ Order exported to Google Sheets");
+  } catch (err) {
+    console.error("❌ Error exporting to Google Sheets:", err);
+  }
+}
 
 // Create orders table on startup
 async function initDB() {
@@ -51,7 +92,7 @@ initDB();
 
 // Test endpoint
 app.get("/", (req, res) => {
-  res.send("✅ Backend is running and connected to Neon DB!");
+  res.send("✅ Backend is running and connected to Neon DB + Google Sheets!");
 });
 
 // Add order
@@ -92,9 +133,14 @@ app.post("/api/order", async (req, res) => {
       ]
     );
 
+    const order = result.rows[0];
+
+    // Export to Google Sheets
+    appendToSheet(order);
+
     res.json({
       message: "✅ Order saved",
-      order: result.rows[0],
+      order,
       preview_link: `https://map-poster-backend-e5f9.onrender.com/preview/${preview_token}`
     });
   } catch (err) {
