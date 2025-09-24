@@ -1,18 +1,15 @@
 const express = require("express");
 const { Pool } = require("pg");
-const crypto = require("crypto");
-const { google } = require("googleapis");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware JSON
 app.use(express.json());
 
-// Middleware CORS – manual headers
+// Middleware CORS
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   next();
 });
@@ -23,188 +20,136 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Google Sheets setup
-const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-
-// Authenticate with service account
-const auth = new google.auth.GoogleAuth({
-  keyFile: "/etc/secrets/google-service-account.json",
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-async function appendToSheet(order) {
-  try {
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client });
-
-    const values = [[
-      order.id,
-      order.shopify_order_id,
-      order.email,
-      order.map_style,
-      order.map_size,
-      order.front_text || "",
-      order.back_text || "",
-      JSON.stringify(order.pins),
-      `https://thecitywood.com/pages/preview?token=${order.preview_token}`,
-      order.created_at
-    ]];
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: "Orders!A:J",
-      valueInputOption: "RAW",
-      requestBody: { values }
-    });
-
-    console.log("✅ Order exported to Google Sheets with Shopify link");
-  } catch (err) {
-    console.error("❌ Error exporting to Google Sheets:", err);
-  }
-}
-
-// Create orders table on startup
+// Initialize DB tables
 async function initDB() {
-  const query = `
-    CREATE TABLE IF NOT EXISTS orders (
+  const queries = [
+    `CREATE TABLE IF NOT EXISTS product_types (
       id SERIAL PRIMARY KEY,
-      shopify_order_id TEXT,
-      ip_address TEXT,
-      email TEXT,
-      map_center_lat DOUBLE PRECISION,
-      map_center_lng DOUBLE PRECISION,
-      map_style TEXT,
-      map_size TEXT,
-      front_text TEXT,
-      back_text TEXT,
-      pins JSONB,
-      generated BOOLEAN DEFAULT false,
-      upload_status TEXT DEFAULT 'pending',
-      preview_token TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      active BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW()
-    );
-  `;
-  await pool.query(query);
-  console.log("✅ Orders table ready");
+    );`,
+    `CREATE TABLE IF NOT EXISTS poster_formats (
+      id SERIAL PRIMARY KEY,
+      product_type_id INT REFERENCES product_types(id) ON DELETE CASCADE,
+      size_cm TEXT NOT NULL,
+      size_in TEXT NOT NULL,
+      base_price NUMERIC(10,2) NOT NULL,
+      discount_type TEXT DEFAULT 'none',
+      discount_value NUMERIC(10,2) DEFAULT 0,
+      active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    );`
+  ];
+  for (const q of queries) {
+    await pool.query(q);
+  }
+  console.log("✅ Tables product_types and poster_formats ready");
 }
 initDB();
 
-// Test endpoint
-app.get("/", (req, res) => {
-  res.send("✅ Backend is running and connected to Neon DB + Google Sheets!");
-});
-
-// Add order
-app.post("/api/order", async (req, res) => {
+// API: Public - get products with formats
+app.get("/api/products", async (req, res) => {
   try {
-    const {
-      shopify_order_id,
-      ip_address,
-      email,
-      map_center_lat,
-      map_center_lng,
-      map_style,
-      map_size,
-      front_text,
-      back_text,
-      pins
-    } = req.body;
+    const productsRes = await pool.query("SELECT * FROM product_types WHERE active = true");
+    const products = productsRes.rows;
 
-    const preview_token = crypto.randomBytes(16).toString("hex");
+    const formatsRes = await pool.query("SELECT * FROM poster_formats WHERE active = true");
+    const formats = formatsRes.rows;
 
-    const result = await pool.query(
-      `INSERT INTO orders
-      (shopify_order_id, ip_address, email, map_center_lat, map_center_lng, map_style, map_size, front_text, back_text, pins, preview_token)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-      RETURNING *`,
-      [
-        shopify_order_id,
-        ip_address,
-        email,
-        map_center_lat,
-        map_center_lng,
-        map_style,
-        map_size,
-        front_text,
-        back_text,
-        pins ? JSON.stringify(pins) : null,
-        preview_token
-      ]
-    );
-
-    const order = result.rows[0];
-
-    // Export to Google Sheets
-    appendToSheet(order);
-
-    res.json({
-      message: "✅ Order saved",
-      order,
-      preview_link: `https://thecitywood.com/pages/preview?token=${preview_token}`
+    const data = products.map(p => {
+      const pf = formats.filter(f => f.product_type_id === p.id).map(f => {
+        let final_price = parseFloat(f.base_price);
+        if (f.discount_type === "percent") {
+          final_price = f.base_price * (1 - f.discount_value / 100);
+        } else if (f.discount_type === "fixed") {
+          final_price = f.base_price - f.discount_value;
+        }
+        return { ...f, final_price };
+      });
+      return { ...p, formats: pf };
     });
+
+    res.json(data);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "❌ Error while saving order" });
+    res.status(500).json({ error: "Error fetching products" });
   }
 });
 
-// Orders list
-app.get("/api/orders", async (req, res) => {
+// Admin: Add product type
+app.post("/api/admin/products", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM orders ORDER BY created_at DESC");
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "❌ Error while fetching orders" });
-  }
-});
-
-// Preview order by token (still works on backend if needed)
-app.get("/preview/:token", async (req, res) => {
-  try {
-    const { token } = req.params;
+    const { name, description, active } = req.body;
     const result = await pool.query(
-      "SELECT * FROM orders WHERE preview_token = $1",
-      [token]
+      "INSERT INTO product_types (name, description, active) VALUES ($1,$2,$3) RETURNING *",
+      [name, description, active ?? true]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).send("❌ Order not found");
-    }
-
-    const order = result.rows[0];
-
-    res.send(`
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <title>Order Preview #${order.id}</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
-          .map { width: 400px; height: 300px; background: #eee; border: 1px solid #ccc; }
-          pre { background: #f8f8f8; padding: 10px; border: 1px solid #ddd; }
-        </style>
-      </head>
-      <body>
-        <h1>Order Preview</h1>
-        <p><strong>Email:</strong> ${order.email}</p>
-        <p><strong>Map:</strong> style=${order.map_style}, size=${order.map_size}</p>
-        <p><strong>Front text:</strong> ${order.front_text || "-"}</p>
-        <p><strong>Back text:</strong> ${order.back_text || "-"}</p>
-        <h2>Pins</h2>
-        <pre>${JSON.stringify(order.pins, null, 2)}</pre>
-      </body>
-      </html>
-    `);
+    res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).send("❌ Error while generating preview");
+    res.status(500).json({ error: "Error adding product" });
   }
 });
 
-// Start server
+// Admin: Update product type
+app.put("/api/admin/products/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, active } = req.body;
+    const result = await pool.query(
+      "UPDATE product_types SET name=$1, description=$2, active=$3, updated_at=NOW() WHERE id=$4 RETURNING *",
+      [name, description, active, id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error updating product" });
+  }
+});
+
+// Admin: Add format
+app.post("/api/admin/formats", async (req, res) => {
+  try {
+    const { product_type_id, size_cm, size_in, base_price, discount_type, discount_value, active } = req.body;
+    const result = await pool.query(
+      `INSERT INTO poster_formats
+      (product_type_id, size_cm, size_in, base_price, discount_type, discount_value, active)
+      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [product_type_id, size_cm, size_in, base_price, discount_type, discount_value, active ?? true]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error adding format" });
+  }
+});
+
+// Admin: Update format
+app.put("/api/admin/formats/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { size_cm, size_in, base_price, discount_type, discount_value, active } = req.body;
+    const result = await pool.query(
+      `UPDATE poster_formats SET size_cm=$1, size_in=$2, base_price=$3, discount_type=$4, discount_value=$5, active=$6, updated_at=NOW()
+       WHERE id=$7 RETURNING *`,
+      [size_cm, size_in, base_price, discount_type, discount_value, active, id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error updating format" });
+  }
+});
+
+// Root
+app.get("/", (req, res) => {
+  res.send("✅ Backend with product_types and poster_formats API is running!");
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
