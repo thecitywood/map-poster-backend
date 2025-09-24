@@ -3,6 +3,7 @@ const { Pool } = require("pg");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "supersecret";
 
 app.use(express.json());
 
@@ -10,7 +11,7 @@ app.use(express.json());
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   next();
 });
 
@@ -19,6 +20,15 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
+
+// Auth middleware for admin routes
+function adminAuth(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader || authHeader !== `Bearer ${ADMIN_PASSWORD}`) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  next();
+}
 
 // Initialize DB tables
 async function initDB() {
@@ -81,7 +91,7 @@ app.get("/api/products", async (req, res) => {
 });
 
 // Admin: Add product type
-app.post("/api/admin/products", async (req, res) => {
+app.post("/api/admin/products", adminAuth, async (req, res) => {
   try {
     const { name, description, active } = req.body;
     const result = await pool.query(
@@ -96,7 +106,7 @@ app.post("/api/admin/products", async (req, res) => {
 });
 
 // Admin: Update product type
-app.put("/api/admin/products/:id", async (req, res) => {
+app.put("/api/admin/products/:id", adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, active } = req.body;
@@ -112,7 +122,7 @@ app.put("/api/admin/products/:id", async (req, res) => {
 });
 
 // Admin: Add format
-app.post("/api/admin/formats", async (req, res) => {
+app.post("/api/admin/formats", adminAuth, async (req, res) => {
   try {
     const { product_type_id, size_cm, size_in, base_price, discount_type, discount_value, active } = req.body;
     const result = await pool.query(
@@ -129,7 +139,7 @@ app.post("/api/admin/formats", async (req, res) => {
 });
 
 // Admin: Update format
-app.put("/api/admin/formats/:id", async (req, res) => {
+app.put("/api/admin/formats/:id", adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { size_cm, size_in, base_price, discount_type, discount_value, active } = req.body;
@@ -147,7 +157,7 @@ app.put("/api/admin/formats/:id", async (req, res) => {
 
 // Root
 app.get("/", (req, res) => {
-  res.send("✅ Backend with product_types and poster_formats API is running!");
+  res.send("✅ Backend with secured admin routes is running!");
 });
 
 app.listen(PORT, () => {
