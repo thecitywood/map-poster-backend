@@ -1,5 +1,6 @@
 const express = require("express");
 const { Pool } = require("pg");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -29,6 +30,13 @@ function adminAuth(req, res, next) {
   }
   next();
 }
+
+// Rate limiter for login attempts
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 5, // limit each IP to 5 requests per windowMs
+  message: { error: "Too many login attempts, please try again later." }
+});
 
 // Initialize DB tables
 async function initDB() {
@@ -88,6 +96,11 @@ app.get("/api/products", async (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Error fetching products" });
   }
+});
+
+// Admin: Login check (rate limited)
+app.get("/api/admin/check", loginLimiter, adminAuth, (req, res) => {
+  res.json({ success: true });
 });
 
 // Admin: Add product type
@@ -157,7 +170,7 @@ app.put("/api/admin/formats/:id", adminAuth, async (req, res) => {
 
 // Root
 app.get("/", (req, res) => {
-  res.send("✅ Backend with secured admin routes is running!");
+  res.send("✅ Backend with secured admin routes + rate limiting is running!");
 });
 
 app.listen(PORT, () => {
