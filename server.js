@@ -1,178 +1,225 @@
 const express = require("express");
 const { Pool } = require("pg");
 const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
+const cors = require("cors");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "supersecret";
-
 app.use(express.json());
+app.use(cors());
 
-// Middleware CORS
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  next();
-});
-
-// Database connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// Auth middleware for admin routes
+// Rate limiting
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  message: { error: "Too many login attempts, try again later." }
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20
+});
+
+// Middleware: admin auth
 function adminAuth(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  if (!authHeader || authHeader !== `Bearer ${ADMIN_PASSWORD}`) {
-    return res.status(403).json({ error: "Forbidden" });
+  const auth = req.headers["authorization"];
+  if (!auth) return res.status(403).json({ error: "Missing auth" });
+  const token = auth.replace("Bearer ", "");
+  if (token !== process.env.ADMIN_PASSWORD) {
+    return res.status(403).json({ error: "Invalid password" });
   }
   next();
 }
 
-// Rate limiter for login attempts
-const loginLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 5, // limit each IP to 5 requests per windowMs
-  message: { error: "Too many login attempts, please try again later." }
-});
-
-// Initialize DB tables
+// DB init
 async function initDB() {
-  const queries = [
-    `CREATE TABLE IF NOT EXISTS product_types (
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS product_types (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       description TEXT,
-      active BOOLEAN DEFAULT true,
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW()
-    );`,
-    `CREATE TABLE IF NOT EXISTS poster_formats (
+      active BOOLEAN DEFAULT true
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS poster_formats (
       id SERIAL PRIMARY KEY,
-      product_type_id INT REFERENCES product_types(id) ON DELETE CASCADE,
-      size_cm TEXT NOT NULL,
-      size_in TEXT NOT NULL,
-      base_price NUMERIC(10,2) NOT NULL,
+      product_id INTEGER REFERENCES product_types(id) ON DELETE CASCADE,
+      size_cm TEXT,
+      size_in TEXT,
+      base_price NUMERIC,
       discount_type TEXT DEFAULT 'none',
-      discount_value NUMERIC(10,2) DEFAULT 0,
-      active BOOLEAN DEFAULT true,
+      discount_value NUMERIC DEFAULT 0,
+      active BOOLEAN DEFAULT true
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id SERIAL PRIMARY KEY,
+      shopify_order_id TEXT,
+      ip_address TEXT,
+      email TEXT,
+      map_center_lat NUMERIC,
+      map_center_lng NUMERIC,
+      map_style TEXT,
+      map_size TEXT,
+      front_text TEXT,
+      back_text TEXT,
+      pins JSONB,
+      generated BOOLEAN DEFAULT false,
+      upload_status TEXT DEFAULT 'pending',
+      preview_token TEXT,
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW()
-    );`
-  ];
-  for (const q of queries) {
-    await pool.query(q);
-  }
-  console.log("✅ Tables product_types and poster_formats ready");
+    );
+  `);
+  console.log("✅ Tables ready");
 }
 initDB();
 
-// API: Public - get products with formats
-app.get("/api/products", async (req, res) => {
-  try {
-    const productsRes = await pool.query("SELECT * FROM product_types WHERE active = true");
-    const products = productsRes.rows;
+// Health check
+app.get("/healthz", (req, res) => res.send("OK"));
 
-    const formatsRes = await pool.query("SELECT * FROM poster_formats WHERE active = true");
-    const formats = formatsRes.rows;
-
-    const data = products.map(p => {
-      const pf = formats.filter(f => f.product_type_id === p.id).map(f => {
-        let final_price = parseFloat(f.base_price);
-        if (f.discount_type === "percent") {
-          final_price = f.base_price * (1 - f.discount_value / 100);
-        } else if (f.discount_type === "fixed") {
-          final_price = f.base_price - f.discount_value;
-        }
-        return { ...f, final_price };
-      });
-      return { ...p, formats: pf };
-    });
-
-    res.json(data);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error fetching products" });
-  }
-});
-
-// Admin: Login check (rate limited)
+// Admin check
 app.get("/api/admin/check", loginLimiter, adminAuth, (req, res) => {
   res.json({ success: true });
 });
 
-// Admin: Add product type
-app.post("/api/admin/products", adminAuth, async (req, res) => {
+// Get products + formats
+app.get("/api/products", async (req, res) => {
+  try {
+    const products = await pool.query("SELECT * FROM product_types ORDER BY id");
+    const formats = await pool.query("SELECT * FROM poster_formats ORDER BY id");
+    const data = products.rows.map(p => ({
+      ...p,
+      formats: formats.rows.filter(f => f.product_id === p.id)
+    }));
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to load products" });
+  }
+});
+
+// Update product
+app.put("/api/admin/products/:id", adminLimiter, adminAuth, async (req, res) => {
   try {
     const { name, description, active } = req.body;
-    const result = await pool.query(
-      "INSERT INTO product_types (name, description, active) VALUES ($1,$2,$3) RETURNING *",
-      [name, description, active ?? true]
-    );
-    res.json(result.rows[0]);
+    await pool.query("UPDATE product_types SET name=$1, description=$2, active=$3 WHERE id=$4",
+      [name, description, active, req.params.id]);
+    res.json({ success: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Error adding product" });
+    res.status(500).json({ error: "Failed to update product" });
   }
 });
 
-// Admin: Update product type
-app.put("/api/admin/products/:id", adminAuth, async (req, res) => {
+// Update format
+app.put("/api/admin/formats/:id", adminLimiter, adminAuth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const { name, description, active } = req.body;
-    const result = await pool.query(
-      "UPDATE product_types SET name=$1, description=$2, active=$3, updated_at=NOW() WHERE id=$4 RETURNING *",
-      [name, description, active, id]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error updating product" });
-  }
-});
-
-// Admin: Add format
-app.post("/api/admin/formats", adminAuth, async (req, res) => {
-  try {
-    const { product_type_id, size_cm, size_in, base_price, discount_type, discount_value, active } = req.body;
-    const result = await pool.query(
-      `INSERT INTO poster_formats
-      (product_type_id, size_cm, size_in, base_price, discount_type, discount_value, active)
-      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [product_type_id, size_cm, size_in, base_price, discount_type, discount_value, active ?? true]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error adding format" });
-  }
-});
-
-// Admin: Update format
-app.put("/api/admin/formats/:id", adminAuth, async (req, res) => {
-  try {
-    const { id } = req.params;
     const { size_cm, size_in, base_price, discount_type, discount_value, active } = req.body;
-    const result = await pool.query(
-      `UPDATE poster_formats SET size_cm=$1, size_in=$2, base_price=$3, discount_type=$4, discount_value=$5, active=$6, updated_at=NOW()
-       WHERE id=$7 RETURNING *`,
-      [size_cm, size_in, base_price, discount_type, discount_value, active, id]
+    await pool.query(
+      "UPDATE poster_formats SET size_cm=$1, size_in=$2, base_price=$3, discount_type=$4, discount_value=$5, active=$6 WHERE id=$7",
+      [size_cm, size_in, base_price, discount_type, discount_value, active, req.params.id]
     );
-    res.json(result.rows[0]);
+    res.json({ success: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Error updating format" });
+    res.status(500).json({ error: "Failed to update format" });
   }
 });
 
-// Root
-app.get("/", (req, res) => {
-  res.send("✅ Backend with secured admin routes + rate limiting is running!");
+// DELETE product + formats
+app.delete("/api/admin/products/:id", adminLimiter, adminAuth, async (req, res) => {
+  try {
+    const productId = req.params.id;
+    await pool.query("DELETE FROM poster_formats WHERE product_id=$1", [productId]);
+    await pool.query("DELETE FROM product_types WHERE id=$1", [productId]);
+    res.json({ success: true, message: "Product and its formats deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to delete product" });
+  }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+// DELETE format
+app.delete("/api/admin/formats/:id", adminLimiter, adminAuth, async (req, res) => {
+  try {
+    const formatId = req.params.id;
+    await pool.query("DELETE FROM poster_formats WHERE id=$1", [formatId]);
+    res.json({ success: true, message: "Format deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to delete format" });
+  }
 });
+
+// Orders endpoints (simplified)
+app.post("/api/order", async (req, res) => {
+  try {
+    const {
+      shopify_order_id, ip_address, email,
+      map_center_lat, map_center_lng, map_style, map_size,
+      front_text, back_text, pins
+    } = req.body;
+    const preview_token = crypto.randomBytes(16).toString("hex");
+    const result = await pool.query(
+      `INSERT INTO orders
+      (shopify_order_id, ip_address, email, map_center_lat, map_center_lng, map_style, map_size, front_text, back_text, pins, preview_token)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [shopify_order_id, ip_address, email, map_center_lat, map_center_lng, map_style, map_size, front_text, back_text, JSON.stringify(pins), preview_token]
+    );
+    const order = result.rows[0];
+    res.json({
+      message: "✅ Order saved",
+      order,
+      preview_link: `https://map-poster-backend-e5f9.onrender.com/preview/${order.preview_token}`
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to save order" });
+  }
+});
+
+app.get("/api/orders", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM orders ORDER BY id DESC LIMIT 50");
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to load orders" });
+  }
+});
+
+// Preview endpoint
+app.get("/preview/:token", async (req, res) => {
+  try {
+    const token = req.params.token;
+    const result = await pool.query("SELECT * FROM orders WHERE preview_token=$1", [token]);
+    if (result.rows.length === 0) {
+      return res.status(404).send("❌ Invalid or expired preview token");
+    }
+    res.send(`
+      <!DOCTYPE html>
+      <html><head><meta charset="utf-8"><title>Your Poster Preview</title></head>
+      <body style="font-family:sans-serif;max-width:900px;margin:auto;text-align:center;">
+        <h1>Your Poster Preview</h1>
+        <p>🖼️ Preview for order token: ${token}</p>
+        <script>
+          setTimeout(()=>{ document.body.innerHTML += '<p>(Map rendering placeholder)</p>'; },2000);
+        </script>
+      </body></html>
+    `);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log("🚀 Server running on port " + PORT));
