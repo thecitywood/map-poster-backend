@@ -1,137 +1,103 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
-const { Pool } = require("pg");
+// server.js
+import express from "express";
+import bodyParser from "body-parser";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
+import pkg from "pg";
+const { Pool } = pkg;
 
 const app = express();
-const port = process.env.PORT || 3000;
+app.use(bodyParser.json());
+app.use(cors());
 
-// Postgres connection (Neon)
+// --- Database ---
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
-app.use(cors());
-app.use(bodyParser.json());
+// --- Rate limit for login ---
+const loginLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 5, // limit each IP to 5 requests per windowMs
+  message: { success: false, error: "Too many login attempts. Try again later." },
+});
 
-/* =============================
-   PRODUCTS
-============================= */
+// --- Admin login ---
+const ADMIN_PASS = process.env.ADMIN_PASS || "test123";
 
-// Get all products
-app.get("/api/products", async (req, res) => {
-  try {
-    const result = await pool.query("SELECT * FROM products ORDER BY sort_order ASC");
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).send(err.message);
+app.post("/api/admin/check", loginLimiter, (req, res) => {
+  const { password } = req.body;
+  if (password === ADMIN_PASS) {
+    res.json({ success: true });
+  } else {
+    res.status(401).json({ success: false, error: "Wrong password" });
   }
 });
 
-// Add product
-app.post("/api/products", async (req, res) => {
-  const {
-    name,
-    description,
-    active,
-    allow_left,
-    allow_center,
-    allow_right,
-    allow_back,
-    allow_pins,
-    allow_gift,
-    allow_frames,
-    allow_top,
-    sort_order,
-  } = req.body;
+// --- Generic CRUD helper ---
+function makeCrudRoutes(table, idField = "id") {
+  // Get all
+  app.get(`/api/${table}`, async (req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT * FROM ${table} ORDER BY ${idField}`);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-  try {
-    const result = await pool.query(
-      `INSERT INTO products 
-      (name, description, active, allow_left, allow_center, allow_right, allow_back, allow_pins, allow_gift, allow_frames, allow_top, sort_order) 
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [
-        name,
-        description,
-        active,
-        allow_left,
-        allow_center,
-        allow_right,
-        allow_back,
-        allow_pins,
-        allow_gift,
-        allow_frames,
-        allow_top,
-        sort_order,
-      ]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
-});
+  // Insert
+  app.post(`/api/${table}`, async (req, res) => {
+    try {
+      const keys = Object.keys(req.body);
+      const values = Object.values(req.body);
+      const placeholders = keys.map((_, i) => `$${i + 1}`).join(",");
+      const query = `INSERT INTO ${table} (${keys.join(",")}) VALUES (${placeholders}) RETURNING *`;
+      const { rows } = await pool.query(query, values);
+      res.json(rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-// Update product
-app.put("/api/products/:id", async (req, res) => {
-  const { id } = req.params;
-  const {
-    name,
-    description,
-    active,
-    allow_left,
-    allow_center,
-    allow_right,
-    allow_back,
-    allow_pins,
-    allow_gift,
-    allow_frames,
-    allow_top,
-    sort_order,
-  } = req.body;
+  // Update
+  app.put(`/api/${table}/:${idField}`, async (req, res) => {
+    try {
+      const id = req.params[idField];
+      const keys = Object.keys(req.body);
+      const values = Object.values(req.body);
+      const set = keys.map((k, i) => `${k}=$${i + 1}`).join(",");
+      const query = `UPDATE ${table} SET ${set} WHERE ${idField}=$${keys.length + 1} RETURNING *`;
+      const { rows } = await pool.query(query, [...values, id]);
+      res.json(rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-  try {
-    const result = await pool.query(
-      `UPDATE products 
-       SET name=$1, description=$2, active=$3, allow_left=$4, allow_center=$5, allow_right=$6, allow_back=$7, 
-           allow_pins=$8, allow_gift=$9, allow_frames=$10, allow_top=$11, sort_order=$12
-       WHERE id=$13 RETURNING *`,
-      [
-        name,
-        description,
-        active,
-        allow_left,
-        allow_center,
-        allow_right,
-        allow_back,
-        allow_pins,
-        allow_gift,
-        allow_frames,
-        allow_top,
-        sort_order,
-        id,
-      ]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
-});
+  // Delete
+  app.delete(`/api/${table}/:${idField}`, async (req, res) => {
+    try {
+      const id = req.params[idField];
+      await pool.query(`DELETE FROM ${table} WHERE ${idField}=$1`, [id]);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+}
 
-// Delete product
-app.delete("/api/products/:id", async (req, res) => {
-  const { id } = req.params;
-  try {
-    await pool.query("DELETE FROM products WHERE id=$1", [id]);
-    res.sendStatus(204);
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
-});
+// --- Register routes ---
+makeCrudRoutes("products");
+makeCrudRoutes("formats");
+makeCrudRoutes("styles");
+makeCrudRoutes("frame_colors");
+makeCrudRoutes("pin_shapes");
+makeCrudRoutes("pin_colors");
 
-/* =============================
-   SERVER START
-============================= */
-app.listen(port, () => {
-  console.log(`✅ Server running on http://localhost:${port}`);
+// --- Server start ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Backend running on port ${PORT}`);
 });
