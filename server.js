@@ -1,103 +1,129 @@
-// server.js
 import express from "express";
-import bodyParser from "body-parser";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
 import pkg from "pg";
+
 const { Pool } = pkg;
-
 const app = express();
-app.use(bodyParser.json());
-app.use(cors());
+const PORT = process.env.PORT || 5000;
 
-// --- Database ---
+// Połączenie z Neon (Postgres)
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  connectionString: process.env.DATABASE_URL, // Render -> Environment -> DATABASE_URL
+  ssl: { rejectUnauthorized: false }
 });
 
-// --- Rate limit for login ---
-const loginLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 5, // limit each IP to 5 requests per windowMs
-  message: { success: false, error: "Too many login attempts. Try again later." },
+app.use(cors());
+app.use(express.json());
+
+/* ======================
+   ✅ ROUTES
+====================== */
+
+// test – sprawdzamy czy działa
+app.get("/", (req, res) => {
+  res.send("✅ Backend is running with PostgreSQL (Neon)");
 });
 
-// --- Admin login ---
-const ADMIN_PASS = process.env.ADMIN_PASS || "test123";
-
-app.post("/api/admin/check", loginLimiter, (req, res) => {
-  const { password } = req.body;
-  if (password === ADMIN_PASS) {
-    res.json({ success: true });
-  } else {
-    res.status(401).json({ success: false, error: "Wrong password" });
+// pobierz wszystkie produkty
+app.get("/api/products", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM products ORDER BY sort_order ASC");
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error fetching products:", err);
+    res.status(500).json({ error: "Failed to fetch products" });
   }
 });
 
-// --- Generic CRUD helper ---
-function makeCrudRoutes(table, idField = "id") {
-  // Get all
-  app.get(`/api/${table}`, async (req, res) => {
-    try {
-      const { rows } = await pool.query(`SELECT * FROM ${table} ORDER BY ${idField}`);
-      res.json(rows);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+// dodaj nowy produkt
+app.post("/api/products", async (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      active,
+      allow_left,
+      allow_center,
+      allow_right,
+      allow_back,
+      allow_pins,
+      allow_gift,
+      allow_frames,
+      allow_top,
+      orientation,
+      width_px,
+      height_px,
+      sort_order
+    } = req.body;
 
-  // Insert
-  app.post(`/api/${table}`, async (req, res) => {
-    try {
-      const keys = Object.keys(req.body);
-      const values = Object.values(req.body);
-      const placeholders = keys.map((_, i) => `$${i + 1}`).join(",");
-      const query = `INSERT INTO ${table} (${keys.join(",")}) VALUES (${placeholders}) RETURNING *`;
-      const { rows } = await pool.query(query, values);
-      res.json(rows[0]);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+    const result = await pool.query(
+      `INSERT INTO products 
+      (name, description, active, allow_left, allow_center, allow_right, allow_back, allow_pins, allow_gift, allow_frames, allow_top, orientation, width_px, height_px, sort_order)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      RETURNING *`,
+      [name, description, active, allow_left, allow_center, allow_right, allow_back, allow_pins, allow_gift, allow_frames, allow_top, orientation, width_px, height_px, sort_order]
+    );
 
-  // Update
-  app.put(`/api/${table}/:${idField}`, async (req, res) => {
-    try {
-      const id = req.params[idField];
-      const keys = Object.keys(req.body);
-      const values = Object.values(req.body);
-      const set = keys.map((k, i) => `${k}=$${i + 1}`).join(",");
-      const query = `UPDATE ${table} SET ${set} WHERE ${idField}=$${keys.length + 1} RETURNING *`;
-      const { rows } = await pool.query(query, [...values, id]);
-      res.json(rows[0]);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("Error inserting product:", err);
+    res.status(500).json({ error: "Failed to add product" });
+  }
+});
 
-  // Delete
-  app.delete(`/api/${table}/:${idField}`, async (req, res) => {
-    try {
-      const id = req.params[idField];
-      await pool.query(`DELETE FROM ${table} WHERE ${idField}=$1`, [id]);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-}
+// aktualizuj produkt
+app.put("/api/products/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      description,
+      active,
+      allow_left,
+      allow_center,
+      allow_right,
+      allow_back,
+      allow_pins,
+      allow_gift,
+      allow_frames,
+      allow_top,
+      orientation,
+      width_px,
+      height_px,
+      sort_order
+    } = req.body;
 
-// --- Register routes ---
-makeCrudRoutes("products");
-makeCrudRoutes("formats");
-makeCrudRoutes("styles");
-makeCrudRoutes("frame_colors");
-makeCrudRoutes("pin_shapes");
-makeCrudRoutes("pin_colors");
+    const result = await pool.query(
+      `UPDATE products SET
+      name=$1, description=$2, active=$3, allow_left=$4, allow_center=$5, allow_right=$6, 
+      allow_back=$7, allow_pins=$8, allow_gift=$9, allow_frames=$10, allow_top=$11, 
+      orientation=$12, width_px=$13, height_px=$14, sort_order=$15
+      WHERE id=$16 RETURNING *`,
+      [name, description, active, allow_left, allow_center, allow_right, allow_back, allow_pins, allow_gift, allow_frames, allow_top, orientation, width_px, height_px, sort_order, id]
+    );
 
-// --- Server start ---
-const PORT = process.env.PORT || 3000;
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error updating product:", err);
+    res.status(500).json({ error: "Failed to update product" });
+  }
+});
+
+// usuń produkt
+app.delete("/api/products/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("DELETE FROM products WHERE id=$1", [id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error deleting product:", err);
+    res.status(500).json({ error: "Failed to delete product" });
+  }
+});
+
+/* ======================
+   ✅ START SERVER
+====================== */
 app.listen(PORT, () => {
-  console.log(`Backend running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
