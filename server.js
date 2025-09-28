@@ -1,8 +1,12 @@
-// server.js
-require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
-const { Pool } = require("pg");
+// server.js (ESM)
+
+import dotenv from "dotenv";
+import express from "express";
+import cors from "cors";
+import pg from "pg";
+
+dotenv.config();
+const { Pool } = pg;
 
 const app = express();
 app.use(cors());
@@ -14,7 +18,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-/** Helper: zamiana undefined -> null (żeby UPDATE nie wysypywał się na brakujące pola) */
+/** Helper: zamiana undefined -> null */
 const n = (v) => (v === undefined ? null : v);
 
 /** Healthcheck */
@@ -29,20 +33,16 @@ app.get("/health", async (_req, res) => {
 
 /** Login (prosty) */
 app.post("/api/admin/check", (req, res) => {
-  const ok = String(req.body?.password || "") === String(process.env.ADMIN_PASSWORD || "");
+  const ok =
+    String(req.body?.password || "") ===
+    String(process.env.ADMIN_PASSWORD || "");
   if (ok) return res.json({ success: true });
   return res.status(401).json({ success: false, message: "Wrong password" });
 });
 
 /* ============================================================
    PRODUCTS
-   schema: products(
-     id, name, description, active,
-     allow_left, allow_center, allow_right, allow_back, allow_pins, allow_gift, allow_frames, allow_top,
-     sort_order, orientation, width_px, height_px
-   )
 ============================================================ */
-
 app.get("/api/products", async (_req, res) => {
   const q = `SELECT * FROM products ORDER BY sort_order NULLS LAST, id ASC`;
   const r = await pool.query(q);
@@ -50,7 +50,9 @@ app.get("/api/products", async (_req, res) => {
 });
 
 app.get("/api/products/:id", async (req, res) => {
-  const r = await pool.query(`SELECT * FROM products WHERE id=$1`, [req.params.id]);
+  const r = await pool.query(`SELECT * FROM products WHERE id=$1`, [
+    req.params.id,
+  ]);
   if (!r.rows[0]) return res.status(404).json({ message: "Not found" });
   res.json(r.rows[0]);
 });
@@ -65,11 +67,21 @@ app.post("/api/products", async (req, res) => {
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
     RETURNING *`;
   const vals = [
-    n(b.name), n(b.description), b.active ? 1 : 0,
-    b.allow_left ? 1 : 0, b.allow_center ? 1 : 0, b.allow_right ? 1 : 0,
-    b.allow_back ? 1 : 0, b.allow_pins ? 1 : 0, b.allow_gift ? 1 : 0,
-    b.allow_frames ? 1 : 0, b.allow_top ? 1 : 0,
-    n(b.sort_order), n(b.orientation), n(b.width_px), n(b.height_px),
+    n(b.name),
+    n(b.description),
+    b.active ? 1 : 0,
+    b.allow_left ? 1 : 0,
+    b.allow_center ? 1 : 0,
+    b.allow_right ? 1 : 0,
+    b.allow_back ? 1 : 0,
+    b.allow_pins ? 1 : 0,
+    b.allow_gift ? 1 : 0,
+    b.allow_frames ? 1 : 0,
+    b.allow_top ? 1 : 0,
+    n(b.sort_order),
+    n(b.orientation),
+    n(b.width_px),
+    n(b.height_px),
   ];
   const r = await pool.query(q, vals);
   res.status(201).json(r.rows[0]);
@@ -85,11 +97,21 @@ app.put("/api/products/:id", async (req, res) => {
     WHERE id=$16
     RETURNING *`;
   const vals = [
-    n(b.name), n(b.description), b.active ? 1 : 0,
-    b.allow_left ? 1 : 0, b.allow_center ? 1 : 0, b.allow_right ? 1 : 0,
-    b.allow_back ? 1 : 0, b.allow_pins ? 1 : 0, b.allow_gift ? 1 : 0,
-    b.allow_frames ? 1 : 0, b.allow_top ? 1 : 0,
-    n(b.sort_order), n(b.orientation), n(b.width_px), n(b.height_px),
+    n(b.name),
+    n(b.description),
+    b.active ? 1 : 0,
+    b.allow_left ? 1 : 0,
+    b.allow_center ? 1 : 0,
+    b.allow_right ? 1 : 0,
+    b.allow_back ? 1 : 0,
+    b.allow_pins ? 1 : 0,
+    b.allow_gift ? 1 : 0,
+    b.allow_frames ? 1 : 0,
+    b.allow_top ? 1 : 0,
+    n(b.sort_order),
+    n(b.orientation),
+    n(b.width_px),
+    n(b.height_px),
     req.params.id,
   ];
   const r = await pool.query(q, vals);
@@ -104,12 +126,7 @@ app.delete("/api/products/:id", async (req, res) => {
 
 /* ============================================================
    FORMATS (per product)
-   schema: formats(
-     id, product_id, cm_size, in_size, orientation,
-     px_width, px_height, price, discount_type, discount_value, active, sort_order
-   )
 ============================================================ */
-
 app.get("/api/products/:productId/formats", async (req, res) => {
   const r = await pool.query(
     `SELECT * FROM formats WHERE product_id=$1
@@ -127,9 +144,17 @@ app.post("/api/products/:productId/formats", async (req, res) => {
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
     RETURNING *`;
   const vals = [
-    req.params.productId, n(b.cm_size), n(b.in_size), n(b.orientation),
-    n(b.px_width), n(b.px_height), n(b.price), n(b.discount_type), n(b.discount_value),
-    b.active ? 1 : 0, n(b.sort_order),
+    req.params.productId,
+    n(b.cm_size),
+    n(b.in_size),
+    n(b.orientation),
+    n(b.px_width),
+    n(b.px_height),
+    n(b.price),
+    n(b.discount_type),
+    n(b.discount_value),
+    b.active ? 1 : 0,
+    n(b.sort_order),
   ];
   const r = await pool.query(q, vals);
   res.status(201).json(r.rows[0]);
@@ -144,8 +169,16 @@ app.put("/api/formats/:id", async (req, res) => {
     WHERE id=$11
     RETURNING *`;
   const vals = [
-    n(b.cm_size), n(b.in_size), n(b.orientation), n(b.px_width), n(b.px_height),
-    n(b.price), n(b.discount_type), n(b.discount_value), b.active ? 1 : 0, n(b.sort_order),
+    n(b.cm_size),
+    n(b.in_size),
+    n(b.orientation),
+    n(b.px_width),
+    n(b.px_height),
+    n(b.price),
+    n(b.discount_type),
+    n(b.discount_value),
+    b.active ? 1 : 0,
+    n(b.sort_order),
     req.params.id,
   ];
   const r = await pool.query(q, vals);
@@ -160,9 +193,7 @@ app.delete("/api/formats/:id", async (req, res) => {
 
 /* ============================================================
    STYLES (per product)
-   schema: styles(id, product_id, name, active, preview_url, sort_order)
 ============================================================ */
-
 app.get("/api/products/:productId/styles", async (req, res) => {
   const r = await pool.query(
     `SELECT * FROM styles WHERE product_id=$1
@@ -179,7 +210,11 @@ app.post("/api/products/:productId/styles", async (req, res) => {
     VALUES ($1,$2,$3,$4,$5)
     RETURNING *`;
   const vals = [
-    req.params.productId, n(b.name), b.active ? 1 : 0, n(b.preview_url), n(b.sort_order),
+    req.params.productId,
+    n(b.name),
+    b.active ? 1 : 0,
+    n(b.preview_url),
+    n(b.sort_order),
   ];
   const r = await pool.query(q, vals);
   res.status(201).json(r.rows[0]);
@@ -191,7 +226,13 @@ app.put("/api/styles/:id", async (req, res) => {
     UPDATE styles SET name=$1, active=$2, preview_url=$3, sort_order=$4
     WHERE id=$5
     RETURNING *`;
-  const vals = [n(b.name), b.active ? 1 : 0, n(b.preview_url), n(b.sort_order), req.params.id];
+  const vals = [
+    n(b.name),
+    b.active ? 1 : 0,
+    n(b.preview_url),
+    n(b.sort_order),
+    req.params.id,
+  ];
   const r = await pool.query(q, vals);
   if (!r.rows[0]) return res.status(404).json({ message: "Not found" });
   res.json(r.rows[0]);
@@ -203,10 +244,8 @@ app.delete("/api/styles/:id", async (req, res) => {
 });
 
 /* ============================================================
-   GLOBAL: FRAME COLORS
-   schema: frame_colors(id, name, active, thumbnail_url, asset_url, sort_order)
+   FRAME COLORS
 ============================================================ */
-
 app.get("/api/frame-colors", async (_req, res) => {
   const r = await pool.query(
     `SELECT * FROM frame_colors ORDER BY sort_order NULLS LAST, id ASC`
@@ -242,10 +281,8 @@ app.delete("/api/frame-colors/:id", async (req, res) => {
 });
 
 /* ============================================================
-   GLOBAL: PIN SHAPES
-   schema: pin_shapes(id, name, active, icon_url, sort_order)
+   PIN SHAPES
 ============================================================ */
-
 app.get("/api/pin-shapes", async (_req, res) => {
   const r = await pool.query(
     `SELECT * FROM pin_shapes ORDER BY sort_order NULLS LAST, id ASC`
@@ -281,10 +318,8 @@ app.delete("/api/pin-shapes/:id", async (req, res) => {
 });
 
 /* ============================================================
-   GLOBAL: PIN COLORS
-   schema: pin_colors(id, name, hex, active, sort_order)
+   PIN COLORS
 ============================================================ */
-
 app.get("/api/pin-colors", async (_req, res) => {
   const r = await pool.query(
     `SELECT * FROM pin_colors ORDER BY sort_order NULLS LAST, id ASC`
@@ -322,7 +357,6 @@ app.delete("/api/pin-colors/:id", async (req, res) => {
 /* ============================================================
    Start
 ============================================================ */
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Control Room API running on :${PORT}`);
