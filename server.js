@@ -15,6 +15,24 @@ const pool = new Pool({
 app.use(cors());
 app.use(express.json());
 
+// --- Healthcheck (prosty test czy backend żyje) ---
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, env: process.env.NODE_ENV || "unknown" });
+});
+
+// --- Logowanie admina (Control Room oczekuje tego endpointu) ---
+// Ustaw w Render zmienną środowiskową: ADMIN_PASS
+app.post("/api/admin/check", (req, res) => {
+  const { password } = req.body || {};
+  const ok = Boolean(password) &&
+             Boolean(process.env.ADMIN_PASS) &&
+             password === process.env.ADMIN_PASS;
+
+  if (ok) return res.json({ success: true });
+  return res.status(401).json({ success: false, error: "Invalid password" });
+});
+
+
 /* ======================
    ✅ ROUTES
 ====================== */
