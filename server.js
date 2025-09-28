@@ -142,6 +142,170 @@ app.delete("/api/products/:id", async (req, res) => {
 /* ======================
    ✅ START SERVER
 ====================== */
+
+/* ======================
+   FORMATS
+====================== */
+app.get("/api/formats", async (_req, res) => {
+  const r = await pool.query(
+    "SELECT * FROM formats ORDER BY sort_order NULLS LAST, id ASC"
+  );
+  res.json(r.rows);
+});
+app.post("/api/formats", async (req, res) => {
+  const { name, active, width_mm, height_mm, dpi, base_price_cents, sort_order } = req.body;
+  const r = await pool.query(
+    `INSERT INTO formats (name, active, width_mm, height_mm, dpi, base_price_cents, sort_order)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [name, active, width_mm, height_mm, dpi, base_price_cents, sort_order]
+  );
+  res.status(201).json(r.rows[0]);
+});
+app.put("/api/formats/:id", async (req, res) => {
+  const { id } = req.params;
+  const { name, active, width_mm, height_mm, dpi, base_price_cents, sort_order } = req.body;
+  const r = await pool.query(
+    `UPDATE formats SET name=$1, active=$2, width_mm=$3, height_mm=$4, dpi=$5, base_price_cents=$6, sort_order=$7
+     WHERE id=$8 RETURNING *`,
+    [name, active, width_mm, height_mm, dpi, base_price_cents, sort_order, id]
+  );
+  res.json(r.rows[0]);
+});
+app.delete("/api/formats/:id", async (req, res) => {
+  await pool.query("DELETE FROM formats WHERE id=$1", [req.params.id]);
+  res.json({ success: true });
+});
+
+/* ======================
+   STYLES
+====================== */
+app.get("/api/styles", async (_req, res) => {
+  const r = await pool.query(
+    "SELECT * FROM styles ORDER BY sort_order NULLS LAST, id ASC"
+  );
+  res.json(r.rows);
+});
+app.post("/api/styles", async (req, res) => {
+  const { name, active, icon_url, sort_order } = req.body;
+  const r = await pool.query(
+    `INSERT INTO styles (name, active, icon_url, sort_order)
+     VALUES ($1,$2,$3,$4) RETURNING *`,
+    [name, active, icon_url, sort_order]
+  );
+  res.status(201).json(r.rows[0]);
+});
+app.put("/api/styles/:id", async (req, res) => {
+  const { id } = req.params;
+  const { name, active, icon_url, sort_order } = req.body;
+  const r = await pool.query(
+    `UPDATE styles SET name=$1, active=$2, icon_url=$3, sort_order=$4 WHERE id=$5 RETURNING *`,
+    [name, active, icon_url, sort_order, id]
+  );
+  res.json(r.rows[0]);
+});
+app.delete("/api/styles/:id", async (req, res) => {
+  await pool.query("DELETE FROM styles WHERE id=$1", [req.params.id]);
+  res.json({ success: true });
+});
+
+/* ======================
+   FRAME COLORS
+====================== */
+app.get("/api/frame-colors", async (_req, res) => {
+  const r = await pool.query(
+    "SELECT * FROM frame_colors ORDER BY sort_order NULLS LAST, id ASC"
+  );
+  res.json(r.rows);
+});
+app.post("/api/frame-colors", async (req, res) => {
+  const { name, active, thumbnail_url, asset_url, sort_order } = req.body;
+  const r = await pool.query(
+    `INSERT INTO frame_colors (name, active, thumbnail_url, asset_url, sort_order)
+     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [name, active, thumbnail_url, asset_url, sort_order]
+  );
+  res.status(201).json(r.rows[0]);
+});
+app.put("/api/frame-colors/:id", async (req, res) => {
+  const { id } = req.params;
+  const { name, active, thumbnail_url, asset_url, sort_order } = req.body;
+  const r = await pool.query(
+    `UPDATE frame_colors SET name=$1, active=$2, thumbnail_url=$3, asset_url=$4, sort_order=$5
+     WHERE id=$6 RETURNING *`,
+    [name, active, thumbnail_url, asset_url, sort_order, id]
+  );
+  res.json(r.rows[0]);
+});
+app.delete("/api/frame-colors/:id", async (req, res) => {
+  await pool.query("DELETE FROM frame_colors WHERE id=$1", [req.params.id]);
+  res.json({ success: true });
+});
+
+/* ======================
+   PIN SHAPES
+====================== */
+app.get("/api/pin-shapes", async (_req, res) => {
+  const r = await pool.query(
+    "SELECT * FROM pin_shapes ORDER BY sort_order NULLS LAST, id ASC"
+  );
+  res.json(r.rows);
+});
+app.post("/api/pin-shapes", async (req, res) => {
+  const { name, active, icon_url, sort_order } = req.body;
+  const r = await pool.query(
+    `INSERT INTO pin_shapes (name, active, icon_url, sort_order)
+     VALUES ($1,$2,$3,$4) RETURNING *`,
+    [name, active, icon_url, sort_order]
+  );
+  res.status(201).json(r.rows[0]);
+});
+app.put("/api/pin-shapes/:id", async (req, res) => {
+  const { id } = req.params;
+  const { name, active, icon_url, sort_order } = req.body;
+  const r = await pool.query(
+    `UPDATE pin_shapes SET name=$1, active=$2, icon_url=$3, sort_order=$4 WHERE id=$5 RETURNING *`,
+    [name, active, icon_url, sort_order, id]
+  );
+  res.json(r.rows[0]);
+});
+app.delete("/api/pin-shapes/:id", async (req, res) => {
+  await pool.query("DELETE FROM pin_shapes WHERE id=$1", [req.params.id]);
+  res.json({ success: true });
+});
+
+/* ======================
+   PIN COLORS
+====================== */
+app.get("/api/pin-colors", async (_req, res) => {
+  const r = await pool.query(
+    "SELECT * FROM pin_colors ORDER BY sort_order NULLS LAST, id ASC"
+  );
+  res.json(r.rows);
+});
+app.post("/api/pin-colors", async (req, res) => {
+  const { name, hex, active, sort_order } = req.body;
+  const r = await pool.query(
+    `INSERT INTO pin_colors (name, hex, active, sort_order)
+     VALUES ($1,$2,$3,$4) RETURNING *`,
+    [name, hex, active, sort_order]
+  );
+  res.status(201).json(r.rows[0]);
+});
+app.put("/api/pin-colors/:id", async (req, res) => {
+  const { id } = req.params;
+  const { name, hex, active, sort_order } = req.body;
+  const r = await pool.query(
+    `UPDATE pin_colors SET name=$1, hex=$2, active=$3, sort_order=$4 WHERE id=$5 RETURNING *`,
+    [name, hex, active, sort_order, id]
+  );
+  res.json(r.rows[0]);
+});
+app.delete("/api/pin-colors/:id", async (req, res) => {
+  await pool.query("DELETE FROM pin_colors WHERE id=$1", [req.params.id]);
+  res.json({ success: true });
+});
+
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
